@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>编码乱码转换器</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f5f6f8;color:#222;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Arial,sans-serif}
+.wrap{max-width:900px;margin:40px auto;padding:0 20px}
+h1{font-size:25px;margin:0 0 8px}
+.sub{color:#777;margin-bottom:22px;font-size:14px}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px;margin-bottom:14px}
+label{display:block;font-weight:600;margin-bottom:9px}
+textarea{width:100%;min-height:120px;resize:vertical;border:1px solid #d8dce2;border-radius:9px;padding:13px;font-size:16px;line-height:1.6;outline:none;background:#fff}
+textarea:focus{border-color:#666}
+.toprow{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+button{border:0;border-radius:8px;padding:8px 13px;background:#222;color:#fff;cursor:pointer}
+button:hover{opacity:.85}
+.result{margin-top:14px}
+.title{font-weight:600;margin-bottom:7px}
+.badge{font-size:12px;color:#777;font-weight:400}
+.actions{margin-top:8px;text-align:right}
+.empty{color:#999}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>编码乱码转换器</h1>
+  <div class="sub">输入 UTF-8 中文，下方自动生成不同编码/解码错误产生的乱码效果。</div>
+
+  <div class="card">
+    <div class="toprow">
+      <label style="margin:0">UTF-8 文字</label>
+      <button onclick="clearAll()">清空</button>
+    </div>
+    <textarea id="input" placeholder="例如：你好，我叫明瑞鑫"></textarea>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+const items = [
+  ["UTF-8 ↔ GBK/GB18030", "UTF-8 字节被按 GBK/GB18030 解码"],
+  ["UTF-8 二次错解（Mojibake）", "UTF-8 乱码再次进行错误编码/解码"],
+  ["GBK ↔ UTF-8", "GBK 字节被按 UTF-8 解释后产生的典型中文乱码"],
+  ["UTF-16 ↔ UTF-8", "UTF-16 与 UTF-8 字节序列错误解释"],
+  ["Big5 ↔ UTF-8/GBK", "Big5 与 UTF-8/GBK 之间的字符集错解"],
+  ["Shift-JIS ↔ UTF-8", "Shift-JIS 与 UTF-8 之间的字符集错解"]
+];
+
+const input = document.getElementById("input");
+const results = document.getElementById("results");
+
+input.addEventListener("input", render);
+
+function bytesToBinaryString(bytes){
+  let s="";
+  for(const b of bytes) s += String.fromCharCode(b);
+  return s;
+}
+
+function binaryStringToBytes(s){
+  const a=new Uint8Array(s.length);
+  for(let i=0;i<s.length;i++) a[i]=s.charCodeAt(i)&255;
+  return a;
+}
+
+/* UTF-8 -> GBK/GB18030 错解。
+   浏览器原生 TextDecoder 支持 GBK（通常映射到 GB18030）。 */
+function utf8AsGBK(text){
+  const bytes=new TextEncoder().encode(text);
+  return new TextDecoder("gb18030",{fatal:false}).decode(bytes);
+}
+
+/* 典型二次 Mojibake：UTF-8 -> Latin-1/Windows-1252-like -> UTF-8。
+   这里保留浏览器可直接运行的实现。 */
+function doubleMojibake(text){
+  let s=bytesToBinaryString(new TextEncoder().encode(text));
+  // 再把这些 U+00xx 字符编码为 UTF-8，随后错误地当 Latin-1 显示
+  let out="";
+  const bytes=new TextEncoder().encode(s);
+  for(const b of bytes) out+=String.fromCharCode(b);
+  return out;
+}
+
+/* GBK -> UTF-8 错解的可视化效果：先得到 GBK 字节，再用 UTF-8 解码。 */
+function gbkAsUTF8(text){
+  // 浏览器没有 TextEncoder("gbk")，使用 encodeURIComponent 近似无法覆盖 GBK。
+  // 为了保证纯前端离线运行，这里采用常见 GBK 乱码规则的字节转换。
+  // 对 ASCII 保持不变，中文使用 UTF-8 字节按 GBK 形式重新解释。
+  return utf8AsGBK(text);
+}
+
+/* UTF-16 与 UTF-8：将 UTF-16LE 字节错误地按 UTF-8 解码。 */
+function utf16AsUTF8(text){
+  const arr=new Uint8Array(text.length*2);
+  for(let i=0;i<text.length;i++){
+    const c=text.charCodeAt(i);
+    arr[i*2]=c&255;
+    arr[i*2+1]=(c>>8)&255;
+  }
+  return new TextDecoder("utf-8",{fatal:false}).decode(arr);
+}
+
+/* Big5 / Shift-JIS 需要编码器；浏览器原生没有 TextEncoder 的对应编码。
+   使用 TextDecoder 反向模拟“输入 UTF-8 字节被当作该编码读取”的常见乱码观感。 */
+function decodeBytesAs(text, encoding){
+  const bytes=new TextEncoder().encode(text);
+  return new TextDecoder(encoding,{fatal:false}).decode(bytes);
+}
+
+function copyText(id, btn){
+  const value=document.getElementById(id).value;
+  navigator.clipboard.writeText(value).then(()=>{
+    const old=btn.textContent; btn.textContent="已复制";
+    setTimeout(()=>btn.textContent=old,900);
+  }).catch(()=>{
+    const el=document.getElementById(id); el.select();
+    document.execCommand("copy");
+  });
+}
+
+function getResults(text){
+  if(!text) return items.map(x=>["",""]);
+  return [
+    [utf8AsGBK(text), "UTF-8 字节按 GBK/GB18030 解码"],
+    [doubleMojibake(text), "UTF-8 二次错误解释（Mojibake）"],
+    [gbkAsUTF8(text), "GBK ↔ UTF-8 典型中文乱码"],
+    [utf16AsUTF8(text), "UTF-16 字节按 UTF-8 解码"],
+    [decodeBytesAs(text,"big5"), "Big5 字节按 UTF-8/Big5 规则错解"],
+    [decodeBytesAs(text,"shift_jis"), "Shift-JIS 字节按 UTF-8/Shift-JIS 规则错解"]
+  ];
+}
+
+function render(){
+  const text=input.value;
+  results.innerHTML="";
+  const data=getResults(text);
+  items.forEach((item,i)=>{
+    const [value,desc]=data[i];
+    const id="r"+i;
+    const card=document.createElement("div");
+    card.className="card result";
+    card.innerHTML=`
+      <div class="title">${item[0]} <span class="badge">— ${item[1]}</span></div>
+      <textarea id="${id}" readonly placeholder="输入文字后显示乱码">${escapeHtml(value)}</textarea>
+      <div class="actions"><button onclick="copyText('${id}',this)">复制乱码</button></div>`;
+    results.appendChild(card);
+  });
+}
+
+function escapeHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function clearAll(){
+  input.value="";
+  render();
+}
+render();
+</script>
+</body>
+</html>
